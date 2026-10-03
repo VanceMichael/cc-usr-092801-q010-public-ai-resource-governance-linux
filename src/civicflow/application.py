@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from .ai_sharing import AISharingService
 from .audit import AuditLog
 from .database import Database
 from .idempotency import IdempotencyStore
@@ -27,13 +28,15 @@ class CivicFlow:
     ledger: Ledger
     reservations: ReservationBook
     jobs: JobQueue
+    ai_sharing: AISharingService
 
     @classmethod
     def open(cls, path: str | Path, *, fixed_now: str | None = None) -> "CivicFlow":
         database = Database(path); database.initialize(); clock = Clock(fixed_now)
         audit = AuditLog(clock); idempotency = IdempotencyStore(clock)
         repository = EntityRepository(database, clock, audit, idempotency)
-        return cls(database, clock, repository, Inbox(database, clock), Outbox(database, clock), Ledger(database, clock), ReservationBook(database), JobQueue(database, clock))
+        ai_sharing = AISharingService(database, clock, audit, idempotency)
+        return cls(database, clock, repository, Inbox(database, clock), Outbox(database, clock), Ledger(database, clock), ReservationBook(database), JobQueue(database, clock), ai_sharing)
 
     def verify(self) -> dict:
         with self.database.connect() as connection:

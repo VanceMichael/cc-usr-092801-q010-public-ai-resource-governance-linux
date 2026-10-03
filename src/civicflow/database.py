@@ -124,6 +124,173 @@ CREATE TABLE IF NOT EXISTS scheduled_jobs (
     last_error TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS jobs_due ON scheduled_jobs(status, run_at, lease_until);
+-- 人工智能成果共享治理
+CREATE TABLE IF NOT EXISTS ai_catalog (
+    artifact_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    state TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    updated_by TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ai_releases (
+    release_id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL,
+    version_tag TEXT NOT NULL,
+    components_json TEXT NOT NULL,
+    manifest_digest TEXT NOT NULL,
+    state TEXT NOT NULL,
+    rights_position INTEGER NOT NULL DEFAULT 0,
+    published_at TEXT NOT NULL,
+    published_by TEXT NOT NULL,
+    UNIQUE(artifact_id, version_tag)
+);
+CREATE TABLE IF NOT EXISTS ai_rights_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    release_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    source TEXT NOT NULL,
+    terms_json TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    effective_at TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    prior_event_id INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ai_rights_release ON ai_rights_events(release_id, event_id);
+CREATE TABLE IF NOT EXISTS ai_derivatives (
+    derivative_id TEXT PRIMARY KEY,
+    release_id TEXT NOT NULL,
+    credential_id TEXT NOT NULL DEFAULT '',
+    org_id TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    manifest_digest TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ai_derivatives_release ON ai_derivatives(release_id, state);
+CREATE TABLE IF NOT EXISTS ai_disposition_tasks (
+    task_id TEXT PRIMARY KEY,
+    derivative_id TEXT NOT NULL,
+    release_id TEXT NOT NULL,
+    trigger_event_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    status TEXT NOT NULL,
+    resolution TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    UNIQUE(derivative_id, trigger_event_id)
+);
+CREATE INDEX IF NOT EXISTS ai_disposition_status ON ai_disposition_tasks(status, created_at);
+CREATE TABLE IF NOT EXISTS ai_quota_policies (
+    policy_id TEXT PRIMARY KEY,
+    release_id TEXT NOT NULL,
+    org_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    period_kind TEXT NOT NULL,
+    limit_qty INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(release_id, org_id, group_id)
+);
+CREATE TABLE IF NOT EXISTS ai_quota_ledger (
+    entry_id TEXT PRIMARY KEY,
+    release_id TEXT NOT NULL,
+    org_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    period_key TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    qty INTEGER NOT NULL,
+    reference TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    UNIQUE(reference, direction)
+);
+CREATE INDEX IF NOT EXISTS ai_quota_sum ON ai_quota_ledger(release_id, org_id, group_id, period_key);
+CREATE TABLE IF NOT EXISTS ai_access_requests (
+    request_id TEXT PRIMARY KEY,
+    release_id TEXT NOT NULL,
+    org_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    purpose TEXT NOT NULL,
+    use_cases_json TEXT NOT NULL,
+    region TEXT NOT NULL,
+    requested_qty INTEGER NOT NULL,
+    emergency INTEGER NOT NULL DEFAULT 0,
+    emergency_reason TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL,
+    submitter TEXT NOT NULL,
+    rights_reviewer TEXT,
+    rights_decision TEXT,
+    rights_reason TEXT NOT NULL DEFAULT '',
+    rights_at TEXT,
+    security_reviewer TEXT,
+    security_decision TEXT,
+    security_reason TEXT NOT NULL DEFAULT '',
+    security_at TEXT,
+    rights_position INTEGER NOT NULL DEFAULT 0,
+    period_key TEXT NOT NULL DEFAULT '',
+    valid_to TEXT,
+    decision_context_json TEXT NOT NULL DEFAULT '{}',
+    submitted_at TEXT NOT NULL,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ai_requests_state ON ai_access_requests(state, submitted_at);
+CREATE TABLE IF NOT EXISTS ai_credentials (
+    credential_id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL UNIQUE,
+    release_id TEXT NOT NULL,
+    org_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    token_digest TEXT NOT NULL,
+    state TEXT NOT NULL,
+    issued_at TEXT NOT NULL,
+    valid_from TEXT NOT NULL,
+    valid_to TEXT NOT NULL,
+    revoke_event_id INTEGER,
+    revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ai_credentials_release ON ai_credentials(release_id, state);
+CREATE TABLE IF NOT EXISTS ai_usage_receipts (
+    receipt_id TEXT PRIMARY KEY,
+    receipt_key TEXT NOT NULL UNIQUE,
+    request_digest TEXT NOT NULL,
+    credential_id TEXT NOT NULL,
+    release_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    reported_at TEXT NOT NULL,
+    reporter TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ai_receipt_quarantine (
+    quarantine_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    receipt_key TEXT NOT NULL,
+    existing_digest TEXT NOT NULL,
+    incoming_digest TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    reporter TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ai_quarantine_key ON ai_receipt_quarantine(receipt_key, quarantine_id);
+CREATE TABLE IF NOT EXISTS ai_work_queue (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id TEXT NOT NULL UNIQUE,
+    item_type TEXT NOT NULL,
+    ref_id TEXT NOT NULL,
+    run_at TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    lease_until TEXT,
+    last_error TEXT NOT NULL DEFAULT '',
+    enqueued_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ai_work_ready ON ai_work_queue(status, run_at, lease_until);
 """
 
 
