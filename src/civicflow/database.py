@@ -124,6 +124,87 @@ CREATE TABLE IF NOT EXISTS scheduled_jobs (
     last_error TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS jobs_due ON scheduled_jobs(status, run_at, lease_until);
+CREATE TABLE IF NOT EXISTS quota_ledger (
+    entry_id TEXT PRIMARY KEY,
+    period_key TEXT NOT NULL,
+    org_id TEXT NOT NULL,
+    beneficiary_group TEXT NOT NULL,
+    asset_version_id TEXT NOT NULL,
+    quantity INTEGER NOT NULL,
+    request_id TEXT NOT NULL,
+    credential_id TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    UNIQUE(period_key, org_id, beneficiary_group, asset_version_id, request_id)
+);
+CREATE INDEX IF NOT EXISTS quota_period ON quota_ledger(period_key, beneficiary_group, asset_version_id, occurred_at);
+CREATE TABLE IF NOT EXISTS access_credentials (
+    credential_id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL UNIQUE,
+    asset_version_id TEXT NOT NULL,
+    org_id TEXT NOT NULL,
+    beneficiary_group TEXT NOT NULL,
+    purpose TEXT NOT NULL,
+    region TEXT NOT NULL,
+    period_key TEXT NOT NULL,
+    quantity INTEGER NOT NULL,
+    used_quantity INTEGER NOT NULL DEFAULT 0,
+    issued_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    issued_by TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS credential_version ON access_credentials(asset_version_id, status);
+CREATE INDEX IF NOT EXISTS credential_expiry ON access_credentials(status, expires_at);
+CREATE TABLE IF NOT EXISTS usage_receipts (
+    receipt_key TEXT PRIMARY KEY,
+    credential_id TEXT NOT NULL,
+    payload_digest TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    received_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS receipt_credential ON usage_receipts(credential_id, received_at);
+CREATE TABLE IF NOT EXISTS receipt_quarantine (
+    quarantine_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    receipt_key TEXT NOT NULL,
+    credential_id TEXT NOT NULL,
+    existing_digest TEXT NOT NULL,
+    incoming_digest TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    received_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS license_decisions (
+    request_id TEXT PRIMARY KEY,
+    credential_id TEXT NOT NULL,
+    decision_json TEXT NOT NULL,
+    decided_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS disposition_tasks (
+    task_id TEXT PRIMARY KEY,
+    asset_version_id TEXT NOT NULL,
+    credential_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT,
+    resolution TEXT
+);
+CREATE INDEX IF NOT EXISTS disposition_pending ON disposition_tasks(status, asset_version_id);
+CREATE TABLE IF NOT EXISTS batch_cursors (
+    cursor_key TEXT PRIMARY KEY,
+    position TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS batch_items (
+    cursor_key TEXT NOT NULL,
+    item_index INTEGER NOT NULL,
+    subject_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    detail_json TEXT NOT NULL,
+    processed_at TEXT NOT NULL,
+    PRIMARY KEY(cursor_key, item_index)
+);
 """
 
 

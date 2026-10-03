@@ -24,39 +24,50 @@ class EntityRepository:
     def create(self, entity_type: str, payload: dict, *, actor: str, request_key: str) -> dict:
         require_safe(entity_type, "实体类型")
         with self.database.transaction() as connection:
-            def operation() -> dict:
-                entity_id = new_id(entity_type)
-                now = self.clock.now()
-                state = str(payload.get("state", "draft"))
-                body = dict(payload)
-                body["state"] = state
-                connection.execute("INSERT INTO entities(entity_type,entity_id,version,state,payload_json,created_at,updated_at,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?)", (entity_type, entity_id, 1, state, canonical_json(body), now, now, actor, actor))
-                connection.execute("INSERT INTO entity_versions(entity_type,entity_id,version,state,payload_json,valid_from,actor_id,request_key) VALUES(?,?,?,?,?,?,?,?)", (entity_type, entity_id, 1, state, canonical_json(body), now, actor, request_key))
-                self.audit.append(connection, actor_id=actor, action="create", entity_type=entity_type, entity_id=entity_id, version=1, detail=body)
-                return self._row_to_dict(connection.execute("SELECT * FROM entities WHERE entity_type=? AND entity_id=?", (entity_type, entity_id)).fetchone())
-            return self.idempotency.execute(connection, scope=f"create:{entity_type}", request_key=request_key, request=payload, operation=operation)
+            return self.create_in(connection, entity_type, payload, actor=actor, request_key=request_key)
+
+    def create_in(self, connection, entity_type: str, payload: dict, *, actor: str, request_key: str) -> dict:
+        """在既有事务内创建实体，供跨表原子操作组合使用。"""
+        require_safe(entity_type, "实体类型")
+        def operation() -> dict:
+            entity_id = new_id(entity_type)
+            now = self.clock.now()
+            state = str(payload.get("state", "draft"))
+            body = dict(payload)
+            body["state"] = state
+            connection.execute("INSERT INTO entities(entity_type,entity_id,version,state,payload_json,created_at,updated_at,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?)", (entity_type, entity_id, 1, state, canonical_json(body), now, now, actor, actor))
+            connection.execute("INSERT INTO entity_versions(entity_type,entity_id,version,state,payload_json,valid_from,actor_id,request_key) VALUES(?,?,?,?,?,?,?,?)", (entity_type, entity_id, 1, state, canonical_json(body), now, actor, request_key))
+            self.audit.append(connection, actor_id=actor, action="create", entity_type=entity_type, entity_id=entity_id, version=1, detail=body)
+            return self._row_to_dict(connection.execute("SELECT * FROM entities WHERE entity_type=? AND entity_id=?", (entity_type, entity_id)).fetchone())
+        return self.idempotency.execute(connection, scope=f"create:{entity_type}", request_key=request_key, request=payload, operation=operation)
 
     def update(self, entity_type: str, entity_id: str, changes: dict, *, actor: str, expected_version: int, request_key: str) -> dict:
         if not changes:
             raise ValidationError("修改内容不能为空")
         with self.database.transaction() as connection:
-            def operation() -> dict:
-                row = connection.execute("SELECT * FROM entities WHERE entity_type=? AND entity_id=?", (entity_type, entity_id)).fetchone()
-                if not row:
-                    raise NotFoundError(f"{entity_type}/{entity_id} 不存在")
-                if row["version"] != expected_version:
-                    raise ConflictError(f"版本冲突，当前为 {row['version']}")
-                payload = json.loads(row["payload_json"]); payload.update(changes)
-                version = expected_version + 1
-                state = str(payload.get("state", row["state"]))
-                now = self.clock.now()
-                changed = connection.execute("UPDATE entities SET version=?,state=?,payload_json=?,updated_at=?,updated_by=? WHERE entity_type=? AND entity_id=? AND version=?", (version, state, canonical_json(payload), now, actor, entity_type, entity_id, expected_version)).rowcount
-                if changed != 1:
-                    raise ConflictError("并发修改导致版本变化")
-                connection.execute("INSERT INTO entity_versions(entity_type,entity_id,version,state,payload_json,valid_from,actor_id,request_key) VALUES(?,?,?,?,?,?,?,?)", (entity_type, entity_id, version, state, canonical_json(payload), now, actor, request_key))
-                self.audit.append(connection, actor_id=actor, action="update", entity_type=entity_type, entity_id=entity_id, version=version, detail=changes)
-                return self._row_to_dict(connection.execute("SELECT * FROM entities WHERE entity_type=? AND entity_id=?", (entity_type, entity_id)).fetchone())
-            return self.idempotency.execute(connection, scope=f"update:{entity_type}:{entity_id}", request_key=request_key, request={"changes": changes, "expected_version": expected_version}, operation=operation)
+            return self.update_in(connection, entity_type, entity_id, changes, actor=actor, expected_version=expected_version, request_key=request_key)
+
+    def update_in(self, connection, entity_type: str, entity_id: str, changes: dict, *, actor: str, expected_version: int, request_key: str) -> dict:
+        """在既有事务内更新实体，供跨表原子操作组合使用。"""
+        if not changes:
+            raise ValidationError("修改内容不能为空")
+        def operation() -> dict:
+            row = connection.execute("SELECT * FROM entities WHERE entity_type=? AND entity_id=?", (entity_type, entity_id)).fetchone()
+            if not row:
+                raise NotFoundError(f"{entity_type}/{entity_id} 不存在")
+            if row["version"] != expected_version:
+                raise ConflictError(f"版本冲突，当前为 {row['version']}")
+            payload = json.loads(row["payload_json"]); payload.update(changes)
+            version = expected_version + 1
+            state = str(payload.get("state", row["state"]))
+            now = self.clock.now()
+            changed = connection.execute("UPDATE entities SET version=?,state=?,payload_json=?,updated_at=?,updated_by=? WHERE entity_type=? AND entity_id=? AND version=?", (version, state, canonical_json(payload), now, actor, entity_type, entity_id, expected_version)).rowcount
+            if changed != 1:
+                raise ConflictError("并发修改导致版本变化")
+            connection.execute("INSERT INTO entity_versions(entity_type,entity_id,version,state,payload_json,valid_from,actor_id,request_key) VALUES(?,?,?,?,?,?,?,?)", (entity_type, entity_id, version, state, canonical_json(payload), now, actor, request_key))
+            self.audit.append(connection, actor_id=actor, action="update", entity_type=entity_type, entity_id=entity_id, version=version, detail=changes)
+            return self._row_to_dict(connection.execute("SELECT * FROM entities WHERE entity_type=? AND entity_id=?", (entity_type, entity_id)).fetchone())
+        return self.idempotency.execute(connection, scope=f"update:{entity_type}:{entity_id}", request_key=request_key, request={"changes": changes, "expected_version": expected_version}, operation=operation)
 
     def get(self, entity_type: str, entity_id: str) -> dict:
         with self.database.connect() as connection:
@@ -90,6 +101,14 @@ class EntityRepository:
             row = connection.execute("SELECT * FROM entity_versions WHERE entity_type=? AND entity_id=? AND valid_from<=? ORDER BY valid_from DESC,version DESC LIMIT 1", (entity_type, entity_id, instant)).fetchone()
             if not row:
                 raise NotFoundError("指定时点没有可见版本")
+            return self._version_to_dict(row)
+
+    def revision(self, entity_type: str, entity_id: str, version: int) -> dict:
+        """读取精确的实体修订版本，用于再现某次判断时的内容。"""
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT * FROM entity_versions WHERE entity_type=? AND entity_id=? AND version=?", (entity_type, entity_id, version)).fetchone()
+            if not row:
+                raise NotFoundError("指定修订版本不存在")
             return self._version_to_dict(row)
 
     @staticmethod
